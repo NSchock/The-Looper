@@ -9,13 +9,15 @@
 ;list-of-posns is all positions in loop where sound occurs
 (define-struct loop (snd posns key))
 
+(define-struct play-time (play? posn))
+
 (define (s x)
   (* 44100 x))
 
 (define LOOP-TIME 5)
 (define LEAD-FRAMES (s 1/28))
 
-;s world is (make-world list-of-loops pstream frames)
+; world is (make-world list-of-loops pstream frames)
 (define-struct world (loops ps frames))
 
 
@@ -25,7 +27,7 @@
 
 ;world key->world
 (define (key-handler w ke)
-  (make-world (construct-loop-list (world-loops w) (world-frames w) ke)
+  (make-world (construct-loop-list (world-loops w) (pstream-current-frame (world-ps w)) ke)
               (play-all-snds (world-loops w) (world-ps w) ke)
               (world-frames w)
               ))
@@ -83,15 +85,37 @@
 ;if frames == any loop posn, play at current time
 ;world->world
 (define (tock w)
-  (make-world (world-loops w)
-              ;(cond [(= (modulo (world-frames w) (* 28 LOOP-TIME)) 0) (make-pstream)]
-              ;[else 
-              (queue-all (world-loops w) (world-ps w))
-              ;])
-              (modulo (add1 (world-frames w)) (* 28 LOOP-TIME)))
-        )
+  #;(cond [(play-time-play? (all-time-to-play? (world-loops w) (pstream-current-frame (world-ps w))))
+         (make-world (world-loops w)
+                     (cond [(= (modulo (world-frames w) (* 28 LOOP-TIME)) 0) (make-pstream)]
+                           [else (queue-all (world-loops w) (world-ps w))])
+                     (modulo (add1 (world-frames w)) (* 28 LOOP-TIME)))]
+        [else w])
+  (check-plays (check-if-play (all-time-to-play? (world-loops w) (pstream-current-frame (world-ps w)))) w)
+  )
+;list-of-play-times->list-of-booleans
+(define (check-if-play lop)
+  (cond [(empty? lop) empty]
+        [else (cons (play-time-play? (first lop))
+                    (check-if-play (rest lop)))]))
+
+(check-expect (check-if-play (list (make-play-time true 420) (make-play-time false 400) (make-play-time true 200))) (list true false true))
+
+;list-of-booleans->world
+(define (check-plays lob w)
+  (cond [(empty? lob) w]
+        [else (both (possibly-play (first lob) w)
+                    (check-plays (rest lob) w))]))
+
+(define (possibly-play bool w)
+  (cond [bool (make-world (world-loops w)
+                     (cond [(= (modulo (world-frames w) (* 28 LOOP-TIME)) 0) (make-pstream)]
+                           [else (queue-all (world-loops w) (world-ps w))])
+                     (modulo (add1 (world-frames w)) (* 28 LOOP-TIME)))]
+        [else w]))
 
 ;list-of-loops pstream->pstream
+;queues all sounds for all loops in list-of-loops
 (define (queue-all lol ps)
   (cond [(empty? lol) ps]
         [else (both (queue-sounds (first lol) ps)
@@ -99,24 +123,41 @@
 
 
 ; loopA pstream -> pstream
+;queues up all sounds for one loop
 (define (queue-sounds loopA ps)
  (cond [(empty? (loop-posns loopA)) ps]
         [else
-        ; (cond [(< (- (tick-frames (first (loop-posns loopA))) (pstream-current-frame ps)) LEAD-FRAMES)
-                (queue-sounds (make-loop (loop-snd loopA) (rest (loop-posns loopA)) (loop-key loopA)) 
+                    (queue-sounds (make-loop (loop-snd loopA) (rest (loop-posns loopA)) (loop-key loopA)) 
                               ;(maybe-play (first (loop-posns loopA)) (loop-snd loopA) ps)
-                              (pstream-queue ps (loop-snd loopA) (tick-frames (first (loop-posns loopA))))
+                                  (pstream-queue ps (loop-snd loopA) (first (loop-posns loopA)))
                               )
-                ;]
-           ;    [else (queue-sounds (make-loop (loop-snd loopA) (rest (loop-posns loopA)) (loop-key loopA)) 
-            ;                       ps)])
          ]))
 
-;plays for full tick? convert to frames?
-;current-frames position sound pstream -> pstream
+;loop frames -> (make-play-time boolean frames)
+(define (time-to-play? loop cur-time)
+  (cond [(empty? (loop-posns loop)) (make-play-time false cur-time)]
+        [else (cond [(< (- (first (loop-posns loop)) LEAD-FRAMES) cur-time) 
+                  (make-play-time true (first (loop-posns loop)))]
+                  [else (time-to-play? (make-loop (loop-snd loop) (rest (loop-posns loop)) (loop-key loop)) cur-time)])]))
+
+;;only takes first val of each posns-list
+;list-of-loops frames -> list-of-play-times
+(define (all-time-to-play? lol cur-time)
+  (cond [(empty? lol) empty]
+        [else (cons (time-to-play? (first lol) cur-time)
+                    (all-time-to-play? (rest lol) cur-time))]))
+
+(check-expect (all-time-to-play? (list (make-loop kick (list 1000 12000 42000) "a") (make-loop ding (list 11600 22500 33200 69000) "b")) 11500) 
+              (list (make-play-time false 11500) (make-play-time true 12000) (make-play-time false 11500) (make-play-time true 11600) (make-play-time false 11500) (make-play-time false 11500) (make-play-time false 11500)))
+
+
+;loops through for multiple ticks and queues within those ticks
+;position sound pstream -> pstream
+;if position is less than lead-frames away from current pstream frame,queue up sound at given position
+;queues one sound at a time based on how close it is to the current frame
 (define (maybe-play posn snd ps)
-  (cond [(< (- (tick-frames posn) (pstream-current-frame ps)) LEAD-FRAMES)
-         (pstream-queue ps snd (tick-frames posn))]
+  (cond [(< (- posn LEAD-FRAMES) (pstream-current-frame ps))
+         (pstream-queue ps snd posn)]
         [else ps]))
 
 (define (both a b)
@@ -127,23 +168,18 @@
   (cond [(= posn 0) posn]
         [else (round (* 44100 (/ 28 posn)))]))
 
-(big-bang (make-world (cons (make-loop c-hi-hat-1 empty "a") (cons (make-loop kick empty "b") empty)) (make-pstream) 0)
+(big-bang (make-world (cons (make-loop kick empty "a") (cons (make-loop c-hi-hat-1 empty "b") empty)) (make-pstream) 0)
           [to-draw draw-world]
           [on-key key-handler]
           [on-tick tock])
 
-
-;OLD---------------------------------------
-;loop pstream -> pstream
-;convert this to list all
-#;(define (queue-sound ls ps)
-  (cond [(empty? (loop-posns ls)) ps]
-        [else (pstream-queue ps (loop-snd ls) (first (loop-posns ls)))]))
-
-;loop pstream -> pstream
-;creates queue of sounds at 
-#;(define (queue-sounds ls ps)
-  (cond [(empty? (loop-posns ls)) ps]
+;list->number
+;returns min posn of list
+(define (min-posn l)
+  (cond [(empty? l) 0]
         [else
-         (queue-sounds (make-loop (loop-snd ls) (rest (loop-posns ls))) 
-                      (pstream-queue ps (loop-snd ls) (first (loop-posns ls))))]))
+         (min-of-posns (first l)
+                       (min-posn (rest l)))]))
+
+(define (min-of-posns p1 p2)
+  (if (< p1 p2) p1 p2))
