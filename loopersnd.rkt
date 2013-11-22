@@ -9,7 +9,7 @@
 ;list-of-posns is all positions in loop where sound occurs
 (define-struct loop (snd posns key))
 
-(define-struct play-time (play? posn))
+(define-struct posin (pos queued))
 
 (define (s x)
   (* 44100 x))
@@ -27,7 +27,7 @@
 
 ;world key->world
 (define (key-handler w ke)
-  (make-world (construct-loop-list (world-loops w) (pstream-current-frame (world-ps w)) ke)
+  (make-world (construct-loop-list (world-loops w) (make-posin (pstream-current-frame (world-ps w)) 0 #;?) ke)
               (play-all-snds (world-loops w) (world-ps w) ke)
               (world-frames w)
               ))
@@ -70,9 +70,9 @@
 (define (maybe-add-posn ke loopA)
   (if (key=? ke (loop-key loopA)) true false))
 
-(check-expect (add-posn empty 12) (cons 12 empty))
-(check-expect (add-posn (cons 12 empty) 20) (cons 20 (cons 12 empty)))
-(check-expect (add-posn (cons 20 (cons 12 empty)) 70) (cons 70 (cons 20 (cons 12 empty))))
+#;(check-expect (add-posn empty 12) (cons 12 empty))
+#;(check-expect (add-posn (cons 12 empty) 20) (cons 20 (cons 12 empty)))
+#;(check-expect (add-posn (cons 20 (cons 12 empty)) 70) (cons 70 (cons 20 (cons 12 empty))))
 
 #;(check-expect (construct-loop-list (cons (make-loop kick (cons 70 empty) "a") (cons (make-loop c-hi-hat-1 (cons 420 empty) "b") empty)) 42 "b")
               (cons (make-loop kick (cons 70 empty) "a") (cons (make-loop c-hi-hat-1 (cons 420 (cons 42 empty)) "b") empty)))
@@ -96,43 +96,75 @@
 ;queues all sounds for all loops in list-of-loops
 (define (queue-all w)
   (cond [(empty? (world-loops w)) (world-ps w)]
-        [else (both (queue-sounds (first (world-loops w)) (world-ps w))
+        [else (both (queue-sounds (first (world-loops w)) (pstream-current-frame (world-ps w)))
                     (queue-all (make-world (rest (world-loops w)) (world-ps w) (world-frames w))))]))
 
 
-; loopA pstream -> pstream
+; loopA pstream -> loopA
 ;queues up all sounds for one loop
-(define (queue-sounds loopA ps)
- (cond [(empty? (loop-posns loopA)) ps]
-        [else
-                    (queue-sounds (make-loop (loop-snd loopA) (rest (loop-posns loopA)) (loop-key loopA)) 
-                                  (if (maybe-play (first (loop-posns loopA)) (loop-snd loopA) (pstream-current-frame ps))
-                                      (pstream-queue ps (loop-snd loopA) (first (loop-posns loopA)))
-                                      ps)
-                                  ;(pstream-queue ps (loop-snd loopA) (first (loop-posns loopA)))
-                              )
+;adds one to queue if ready to play NOT
+;adds to counter for loop position if ready to play
+(define (queue-sounds loopA cur-frame)
+ (cond [(empty? (loop-posns loopA)) loopA]
+        [else             
+         (if (maybe-play (first (loop-posns loopA)) (loop-snd loopA) cur-frame)
+                       #;(queue-sounds (make-loop (loop-snd loopA) (rest (loop-posns loopA)) (loop-key loopA))                                   
+                                            
+                                                #;(pstream-queue ps (loop-snd loopA) (first (loop-posns loopA)))
+                                                ps)
+                       ;(both 
+                       (make-loop (loop-snd loopA) (change-first (loop-posns loopA)) (loop-key loopA))
+                             #;(queue-sounds (make-loop (loop-snd loopA) (change-first (loop-posns loopA)) (loop-key loopA))                                   
+                                            
+                                                #;(pstream-queue ps (loop-snd loopA) (first (loop-posns loopA)))
+                                                ps);)
+
+                       (queue-sounds (make-loop (loop-snd loopA) (rest (loop-posns loopA)) (loop-key loopA))                                   
+                                            
+                                                #;(pstream-queue ps (loop-snd loopA) (first (loop-posns loopA)))
+                                                cur-frame)
+                       )
+                       
          ]))
+
+(check-expect (queue-sounds (make-loop kick (list (make-posin 42000 0) (make-posin 10000 0)) "a") 41500) (make-loop kick (list (make-posin 42000 1) (make-posin 10000 0)) "a"))
+
+#;(define (play-snd loopA ps)
+  (cond [(empty? (loop-posns loopA)) ps]
+        [else (first loopA)
+              ((rest loopA))]))
+
+;change first in list-of-posins
+;list-of-posins->list-of-posins
+(define (change-first lop)
+  (cond [(empty? lop) lop]
+        [else (cons (make-posin (posin-pos (first lop)) (add1 (posin-queued (first lop))))
+                    (rest lop))]))
+
+(define (valid-play snd posn ps)
+  (cond [(<= (posin-queued posn) 1) (pstream-queue ps snd (posin-pos posn))]
+        [else ps]))
 
 ;loops through for multiple ticks and queues within those ticks
 ;position sound pstream -> pstream
 ;if position is less than lead-frames away from current pstream frame,queue up sound at given position
 ;queues one sound at a time based on how close it is to the current frame
-(define (maybe-play posn snd cur-frames)
-  #;(cond [(< (- posn LEAD-FRAMES) cur-frames)
-         (pstream-queue ps snd posn)]
+(define (maybe-play p snd cur-frames)
+  #;(cond [(< (- (posin-pos p) LEAD-FRAMES) cur-frames)
+         (pstream-queue ps snd (posin-pos p))]
         [else ps])
-  (< (- posn LEAD-FRAMES) cur-frames))
+  (< (- (posin-pos p) LEAD-FRAMES) cur-frames))
 
 (define (both a b)
   b)
 
-(big-bang (make-world (cons (make-loop ding empty "a") (cons (make-loop c-hi-hat-1 empty "b") empty)) (make-pstream) 0)
+(big-bang (make-world (cons (make-loop kick empty "a") (cons (make-loop c-hi-hat-1 empty "b") empty)) (make-pstream) 0)
           [to-draw draw-world]
           [on-key key-handler]
           [on-tick tock])
 
 ;converts ticks to frames
-(define (tick-frames posn)
+#;(define (tick-frames posn)
   (cond [(= posn 0) posn]
         [else (round (* 44100 (/ 28 posn)))]))
 
