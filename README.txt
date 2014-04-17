@@ -1,6 +1,7 @@
 A Looper/Beat sampler created in Racket. 
 
-Allows users to play sounds, record them in a loop, and save the loop. The loop may also be loaded as yet another sound that may be played.
+Allows users to play sounds, record them in a loop, and save the loop. The loop may also be loaded
+as yet another sound that may be played.
 
 LooperClean.rkt — the main racket program file, runs everything for the program.
 put-file.rkt — racket file for reading the loop files
