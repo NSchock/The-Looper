@@ -15,3 +15,11 @@ a-j — synth notes
 e — allows loading of wav sounds into the program
 q — key that the loaded sounds from e are mapped to, use this to play that sound
 return/enter — mutes the program
+
+——————————————————————
+
+Authors: Nolan Schock
+         Joey Gross
+         Logan Williams
+         Alex Maestre
+         Juan Ramirez
